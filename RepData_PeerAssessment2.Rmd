@@ -1,0 +1,17 @@
+---
+title: "Reproducable Research Project 2"
+author: "J.E. Panzik"
+date: "5/20/2020"
+output: html_document
+---
+
+#Title
+
+Some text
+
+```{r}
+x <- rnorm(100)
+y <- rnorm(100) + x
+
+plot(x,y)
+```

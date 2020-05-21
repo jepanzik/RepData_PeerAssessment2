@@ -1,17 +1,244 @@
 ---
-title: "Reproducable Research Project 2"
+title: "Health and Financial Impacts of Natural Distasters"
 author: "J.E. Panzik"
-date: "5/20/2020"
+date: "5/21/2020"
 output: html_document
 ---
 
-#Title
+# Abstract
 
-Some text
+The following analysis takes data on the aftermath of disasters collected from the NOAA. Binning the measurements based on common event types, the total impact of each event on human life (fatalities and injuries) and economic impact (property and crop damage) are calculated and ranked. Tornadoes are the most harmful disaster types to human health, and floods cause the most damage to property and crops. 
 
-```{r}
-x <- rnorm(100)
-y <- rnorm(100) + x
+# Motivation
 
-plot(x,y)
+Storms and other severe weather events can cause both public health and economic problems for communities and municipalities. Many severe events can result in fatalities, injuries, and property damage, and preventing such outcomes to the extent possible is a key concern.
+
+This project involves exploring the U.S. National Oceanic and Atmospheric Administration’s (NOAA) storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.
+
+# Data Acquisition
+
+Data was acquired from <https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2>, and is described by the NOAA at the following locations:
+
+- National Weather Service [Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
+- National Climatic Data Center Storm Events [FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)
+
+<br />
+
+The NOAA storm data is acquired from the available URL and read.
+
+```{r dataread, cache=TRUE}
+if(!file.exists("./data")){dir.create("./data")}
+
+if(file.exists("./data/repdata-data-StormData.csv")) {
+      print("Data file is present")
+      dataRaw <- read.csv("./data/repdata-data-StormData.csv", na.strings=c(""," ","NA"))
+} else if (file.exists("./data/repdata-data-StormData.csv.bz2")) {
+      print("Data file is present")
+      dataRaw <- read.csv("./data/repdata-data-StormData.csv.bz2", na.strings=c(""," ","NA"))   
+} else {
+      print("Data file is downloading from internet")
+      download.file(url="https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2", destfile="./data/repdata-data-StormData.csv.bz2", method="curl")
+      dataRaw <- read.csv("./data/repdata-data-StormData.csv.bz2", na.strings=c(""," ","NA"))
+}
+```
+
+<br />
+
+A quick look at the raw data shows a few things:
+
+- The date, time, and timezone are all stored in separated column variables.
+- Damage values are stored in one column, and their exponent is stored in a separate column.
+- Event types are not uniformly coded or described. (985 unique entries)
+
+```{r dataproperties}
+head(dataRaw[,c(1:8, 23:28)])
+
+str(dataRaw$EVTYPE)
+```
+
+# Data Processing
+
+In order to accurately count the impact of each type of event, the events in EVTYPE need to be converted to uniform formats corresponding to the event types provided in the NOAA documentation, and the amount of damage needs to combine the values and exponents
+
+### Subsetting
+
+Since this study is focused on the health and economic impact, a subset of the raw data will be used.
+
+```{r impactsub}
+impact <- dataRaw[, c("EVTYPE","FATALITIES","INJURIES", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP")]
+
+```
+
+<br />
+
+### Damage Computation
+
+The following converion puts all of the DMGEXP values as uppercase characters, swaps out non-number values with a corresponding number value (such as B representing 9), converts to numbers, and uses them to determine the full-length damage value to property and crops.
+
+```{r dmgconversion}
+impact$PROPDMGEXP <- toupper(as.character(impact$PROPDMGEXP))
+impact$PROPDMGEXP[is.na(impact$PROPDMGEXP)] <- "0"
+impact$PROPDMGEXP[impact$PROPDMGEXP=="-"] <- "0"
+impact$PROPDMGEXP[impact$PROPDMGEXP=="?"] <- "0"
+impact$PROPDMGEXP[impact$PROPDMGEXP=="+"] <- "0"
+impact$PROPDMGEXP[impact$PROPDMGEXP=="B"] <- "9"
+impact$PROPDMGEXP[impact$PROPDMGEXP=="M"] <- "6"
+impact$PROPDMGEXP[impact$PROPDMGEXP=="K"] <- "3"
+impact$PROPDMGEXP[impact$PROPDMGEXP=="H"] <- "2"
+impact$PROPDMGEXP <- as.numeric(impact$PROPDMGEXP)
+impact$PROPDMGFULL <- impact$PROPDMG*(10^impact$PROPDMGEXP)
+
+impact$CROPDMGEXP <- toupper(as.character(impact$CROPDMGEXP))
+impact$CROPDMGEXP[is.na(impact$CROPDMGEXP)] <- "0"
+impact$CROPDMGEXP[impact$CROPDMGEXP=="?"] <- "0"
+impact$CROPDMGEXP[impact$CROPDMGEXP=="B"] <- "9"
+impact$CROPDMGEXP[impact$CROPDMGEXP=="M"] <- "6"
+impact$CROPDMGEXP[impact$CROPDMGEXP=="K"] <- "3"
+impact$CROPDMGEXP <- as.numeric(impact$CROPDMGEXP)
+impact$CROPDMGFULL <- impact$CROPDMG*(10^impact$CROPDMGEXP)
+```
+
+### Event Type Filtering
+
+The event types are mainly entered in a uniform manner, but there are many that contain variations such as:
+
+- Misspellings
+- Multiple Descriptors
+- Changes in whitespace and separators
+- Abreviations
+
+In order to more accurately describe the data, the EVTYPES were grouped into uniform categories based on some common character strings.
+```{r EVTYPEgroup}
+#Convert EVTYPEs to uniform codes
+impact$EVTYPE <- toupper(impact$EVTYPE)
+impact$EVTYPE <- gsub("* ", "", impact$EVTYPE)
+impact$EVTYPE <- gsub("TSTM", "THUNDERSTORM", impact$EVTYPE)
+impact$EVTYPE[grepl("LIGHTNING", x=impact$EVTYPE)] <- "Lightning"
+impact$EVTYPE[grepl("LIGHTING", x=impact$EVTYPE)] <- "Lightning"
+impact$EVTYPE[grepl("MARINETHUN", x=impact$EVTYPE)] <- "Marine Thunderstorm Winds"
+impact$EVTYPE[grepl("THUN", x=impact$EVTYPE)] <- "Thunderstorm Winds"
+impact$EVTYPE[grepl("TUNDER", x=impact$EVTYPE)] <- "Thunderstorm Winds"
+impact$EVTYPE[grepl("THUD", x=impact$EVTYPE)] <- "Thunderstorm Winds"
+impact$EVTYPE[grepl("FLASH", x=impact$EVTYPE)] <- "Flash Flood"
+impact$EVTYPE[grepl("FIRE", x=impact$EVTYPE)] <- "Wildfire"
+impact$EVTYPE[grepl("VOLC", x=impact$EVTYPE)] <- "Volcanic Ash"
+impact$EVTYPE[grepl("MARINEHAIL", x=impact$EVTYPE)] <- "Marine Hail"
+impact$EVTYPE[grepl("MARINESTRONG", x=impact$EVTYPE)] <- "Marine Strong Wind"
+impact$EVTYPE[grepl("MARINEHIGH", x=impact$EVTYPE)] <- "Marine High Wind"
+impact$EVTYPE[grepl("HAIL", x=impact$EVTYPE)] <- "Hail"
+impact$EVTYPE[grepl("WATERSP", x=impact$EVTYPE)] <- "Waterspout"
+impact$EVTYPE[grepl("SPOUT", x=impact$EVTYPE)] <- "Waterspout"
+impact$EVTYPE[grepl("SLIDE", x=impact$EVTYPE)] <- "Debris Flow"
+impact$EVTYPE[grepl("STREAM", x=impact$EVTYPE)] <- "Flood"
+impact$EVTYPE[grepl("URBAN", x=impact$EVTYPE)] <- "Flood"
+impact$EVTYPE[grepl("DRY", x=impact$EVTYPE)] <- "Drought"
+impact$EVTYPE[grepl("DROUGHT", x=impact$EVTYPE)] <- "Drought"
+impact$EVTYPE[grepl("DUST", x=impact$EVTYPE)] <- "Dust Storm"
+impact$EVTYPE[grepl("RIP", x=impact$EVTYPE)] <- "Rip Current"
+impact$EVTYPE[grepl("AVA", x=impact$EVTYPE)] <- "Avalanche"
+impact$EVTYPE[grepl("EXCESSIVEHEAT", x=impact$EVTYPE)] <- "Excessive Heat"
+impact$EVTYPE[grepl("HEAT", x=impact$EVTYPE)] <- "Heat"
+impact$EVTYPE[grepl("LOWTI", x=impact$EVTYPE)] <- "Astronomical Low Tide"
+impact$EVTYPE[grepl("EXT", x=impact$EVTYPE)] <- "Extreme Cold/Wind Chill"
+impact$EVTYPE[grepl("EXCESSIVECOLD", x=impact$EVTYPE)] <- "Extreme Cold/Wind Chill"
+impact$EVTYPE[grepl("COLD", x=impact$EVTYPE)] <- "Cold/Wind Chill"
+impact$EVTYPE[grepl("CHILL", x=impact$EVTYPE)] <- "Cold/Wind Chill"
+impact$EVTYPE[grepl("TORN", x=impact$EVTYPE)] <- "Tornado"
+impact$EVTYPE[grepl("TROPICALSTORM", x=impact$EVTYPE)] <- "Tropical Storm"
+impact$EVTYPE[grepl("TROPICALDEP", x=impact$EVTYPE)] <- "Tropical Depression"
+impact$EVTYPE[grepl("SLEET", x=impact$EVTYPE)] <- "Sleet"
+impact$EVTYPE[grepl("HURRICANE", x=impact$EVTYPE)] <- "Hurricane (Typhoon)"
+impact$EVTYPE[grepl("TYPH", x=impact$EVTYPE)] <- "Hurricane (Typhoon)"
+impact$EVTYPE[grepl("BLIZ", x=impact$EVTYPE)] <- "Blizzard"
+impact$EVTYPE[grepl("COASTALFL", x=impact$EVTYPE)] <- "Coastal Flood"
+impact$EVTYPE[grepl("CSTL", x=impact$EVTYPE)] <- "Coastal Flood"
+impact$EVTYPE[grepl("SURGE", x=impact$EVTYPE)] <- "Storm Surge/Tide"
+impact$EVTYPE[grepl("TIDAL", x=impact$EVTYPE)] <- "Storm Surge/Tide"
+impact$EVTYPE[grepl("HIGHTIDE", x=impact$EVTYPE)] <- "Storm Surge/Tide"
+impact$EVTYPE[grepl("LAKESHOREFLOOD", x=impact$EVTYPE)] <- "Lakeshore Flood"
+impact$EVTYPE[grepl("LAKEFLOOD", x=impact$EVTYPE)] <- "Lakeshore Flood"
+impact$EVTYPE[grepl("HEAVYRAIN", x=impact$EVTYPE)] <- "Heavy Rain"
+impact$EVTYPE[grepl("ICESTO", x=impact$EVTYPE)] <- "Ice Storm"
+impact$EVTYPE[grepl("FLOOD", x=impact$EVTYPE)] <- "Flood"
+impact$EVTYPE[grepl("ICE", x=impact$EVTYPE)] <- "Ice Storm"
+impact$EVTYPE[grepl("WINTERSTO", x=impact$EVTYPE)] <- "Winter Storm"
+impact$EVTYPE[grepl("WINTERWEAT", x=impact$EVTYPE)] <- "Winter Weather"
+impact$EVTYPE[grepl("TSUNA", x=impact$EVTYPE)] <- "Tsunami"
+impact$EVTYPE[grepl("LAKE", x=impact$EVTYPE)] <- "Lake-Effect Snow"
+impact$EVTYPE[grepl("WIND", x=impact$EVTYPE)] <- "Wind"
+impact$EVTYPE[grepl("HEAVYSNOW", x=impact$EVTYPE)] <- "Heavy Snow"
+impact$EVTYPE[grepl("FREEZING", x=impact$EVTYPE)] <- "Sleet"
+impact$EVTYPE[grepl("FREEZ", x=impact$EVTYPE)] <- "Frost/Freeze"
+impact$EVTYPE[grepl("FROST", x=impact$EVTYPE)] <- "Frost/Freeze"
+```
+
+# Analysis
+
+The first analysis looks at the harm inflicted on people as injuries or fatalities. Injuries and fatalities are summed by each event type and stored in a new data frame. Event types with the 10 most fatalities are taken. The columns of the data frame for the types of human impact are condensed into 1 column with the harm (fatality, injury, total) as a factor.
+
+```{r harmrank}
+eventHarm <- aggregate(FATALITIES~EVTYPE,impact, FUN=sum)
+eventHarm <- merge(eventHarm, aggregate(INJURIES~EVTYPE,impact, FUN=sum))
+eventHarm$TotalHarmed <- eventHarm$FATALITIES + eventHarm$INJURIES
+eventHarm <- eventHarm[order(-eventHarm$FATALITIES)[1:10],]
+library(reshape2)
+Harm <- melt(eventHarm, id.vars="EVTYPE", variable.name = "harmType")
+
+eventHarm
+```
+
+<br />
+
+The second analysis looks at the damage inflicted on property and crops in monetary values. Property and crop damages are summed by each event type and stored in a new data frame. Event types with the 10 largest property damages are taken. The columns of the data frame for the types of damage are condensed into 1 column with the damage (property, crop, total) as a factor.
+
+```{r damagerank}
+eventDamage <- aggregate(PROPDMGFULL~EVTYPE,impact, FUN=sum)
+eventDamage <- merge(eventDamage, aggregate(CROPDMGFULL~EVTYPE,impact, FUN=sum))
+eventDamage$TotalDamage <- eventDamage$PROPDMGFULL + eventDamage$CROPDMGFULL
+eventDamage <- eventDamage[order(-eventDamage$PROPDMGFULL)[1:10],]
+Damage <- melt(eventDamage, id.vars="EVTYPE", variable.name = "damageType")
+
+eventDamage
+```
+
+Entries in the data are cleaned up to make figures look better.
+
+```{r cleanup}
+Harm$harmType <- gsub("FATALITIES", "Fatalities", Harm$harmType)
+Harm$harmType <- gsub("INJURIES", "Injuries", Harm$harmType)
+Harm$harmType <- gsub("TotalHarm", "Total Harm", Harm$harmType)
+
+
+Damage$damageType <- gsub("PROPDMGFULL", "Property Damage", Damage$damageType)
+Damage$damageType <- gsub("CROPDMGFULL", "Crop Damage", Damage$damageType)
+Damage$damageType <- gsub("TotalDamage", "Total Damage", Damage$damageType)
+```
+
+# Results
+
+### Health Impact
+
+The plot below shows the impact on human health based on the number of fatalities, injuries, and the sum of both. Based on this plot we see tornadoes cause the most harm to people.
+
+```{r harmplot}
+library(ggplot2)
+ggplot(Harm, aes(x=reorder(EVTYPE, -value), y=value)) + 
+   geom_bar(stat="identity", aes(fill=harmType), position="dodge") +
+   xlab("Disaster Type") +
+   ylab("Number of People") +
+   ggtitle("Top 10 Disaster Types with the Most Fatalities") + 
+   theme(axis.text.x = element_text(angle=45, hjust=1))
+```
+
+## Financial Impact
+
+The plot below shows the economic impact based on the cost of damages to property, crops, and the sum of both. Based on this plot we see floods cause the most property damage.
+
+```{r damageplot}
+ggplot(Damage, aes(x=reorder(EVTYPE, -value), y=value)) + 
+   geom_bar(stat="identity", aes(fill=damageType), position="dodge") +
+   xlab("Disaster Type") +
+   ylab("Damage Caused ($)") +
+   ggtitle("Top 10 Disaster Types with the Most Property Damage") + 
+   theme(axis.text.x = element_text(angle=45, hjust=1))
 ```
